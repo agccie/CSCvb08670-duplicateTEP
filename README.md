@@ -29,3 +29,31 @@ Abandoned/Freed Leases   : 2
 ```
 
 __NOTE__ If a pool is in the 'recovery' state, then no new leases will be assigned from it.  Therefore, even if the free count of a recovery pool is not zero, it is safe to add a new node to the fabric
+
+For users uncomfortable with running scripts directly on the apic, the required objects can be collected into a .tgz file and analyzed offline.  For example:
+
+```
+
+$./check_CSCvb08670.py --offlineHelp
+
+  Offline mode expects a .tgz file.  For example:
+  ./check_CSCvb08670.py --offline ./offline_data.tgz
+
+  When executing in offline mode, ensure that all required data is present in
+  input tar file. For best results, collect information for all tables using
+  the filenames used below. Once all commands have completed, the final tar
+  file can be found at:
+    /tmp/offline_data.tgz
+
+  bash -c '
+   icurl http://127.0.0.1:7777/api/class/dhcpLease.json  > /tmp/off_dhcpLease.json
+   icurl http://127.0.0.1:7777/api/class/dhcpPool.json  > /tmp/off_dhcpPool.json
+   icurl http://127.0.0.1:7777/api/class/opflexODev.json  > /tmp/off_opflexODev.json
+   icurl http://127.0.0.1:7777/api/class/topSystem.json  > /tmp/off_topSystem.json
+  rm /tmp/offline_data.tgz
+  tar -zcvf /tmp/offline_data.tgz /tmp/off_*
+  rm /tmp/off_*
+  '
+
+```
+
