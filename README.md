@@ -6,7 +6,7 @@ This script will detect duplicate leases and pools along with highlighting lease
 
 The script should be run directly on the APIC.  Copy the file via scp/sftp and execute it directly on the command line: 
 
-```python
+```
 
 fab3-apic1# ./check_CSCvb08670.py
 fabric nodes             : 6
