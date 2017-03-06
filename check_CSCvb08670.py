@@ -1,6 +1,6 @@
 #!/usr/bin/python2.7
 
-import subprocess, sys, traceback, logging
+import subprocess, sys, traceback, logging, os
 import time, re, json
 
 # ensure check_output is available
@@ -12,6 +12,10 @@ if not hasattr(subprocess, "check_output"):
     sys.exit(m)
 
 logger = logging.getLogger(__name__)
+
+OFFLINE_OBJECTS = [ "dhcpLease", "dhcpPool", "opflexODev", "topSystem"]
+OFFLINE_FILES = {}
+OFFLINE_MODE = False
 
 ###############################################################################
 # lib functions
@@ -39,6 +43,36 @@ def setup_logger(**kwargs):
         datefmt="%Z %Y-%m-%dT%H:%M:%S")
     )
     logger.addHandler(logger_handler)
+
+def offline_extract(tgz, **kwargs):
+    """ 
+    extract files in tar bundle to tmp directory.  Only files matching
+    provided offline_keys dict (which is also used as key in returned dict)
+    """
+    offline_files = {}
+    offline_dir = kwargs.get("offline_dir", "/tmp/")
+    offline_keys = kwargs.get("offline_keys", {})
+    import tarfile
+    # force odir to real directory (incase 'file' is provided as offline_dir)
+    odir = os.path.dirname(offline_dir)
+    try:
+        t = tarfile.open(tgz, "r:gz")
+        for m in t.getmembers():
+            # check for files matching offline_keys
+            for tn in offline_keys:
+                if "%s." % tn in m.name:
+                    offline_files[tn] = "%s/%s" % (odir, m.name)
+                    t.extract(m, path=odir)
+                    logging.debug("extracting %s/%s" % (odir, m.name))
+                    break
+
+    except Exception as e:
+        logging.error("Failed to extract content from offline tar file")
+        import traceback
+        traceback.print_exc()
+        sys.exit()
+    
+    return offline_files
 
 def get_cmd(cmd):
     """ return output of shell command, return None on error"""
@@ -99,7 +133,7 @@ def icurl(url, **kwargs):
                 return results
             page+= 1
         except ValueError as e:
-            logger.error("failed to decode resp: %s" % resp.text)
+            logger.error("failed to decode resp: %s" % resp)
             return None
     return None
 
@@ -115,6 +149,28 @@ def get_dn(dn, **kwargs):
 
 def get_class(classname, **kwargs):
     # perform class query
+
+    # support offline for class query only for now
+    if OFFLINE_MODE:
+        if classname not in OFFLINE_FILES: 
+            logger.error("%s not found in offline files" % classname)
+            return None
+        fname = OFFLINE_FILES[classname]
+        try:
+            logger.debug("reading file %s" % fname)
+            with open(fname, "r") as f:
+                js = json.loads(f.read())
+                if "imdata" not in js or "totalCount" not in js:
+                    logger.error("failed to parse js reply: %s" % (
+                        pretty_print(js)))
+                    return None
+                return js["imdata"]
+        except ValueError as e:
+            logger.error("failed to decode resp: %s" % f.read())
+        except Exception as e:
+            logging.error("unabled to read %s: %s" % (fname,e))
+            return None
+    
     opts = build_query_filters(**kwargs)
     url = "/api/class/%s.json%s" % (classname, opts)
     return icurl(url, **kwargs)
@@ -205,7 +261,7 @@ def get_nodes():
     fnodes = get_class("topSystem")
     if fnodes is None:
         logger.error("failed to get topSystem")
-        return None
+        return (None,None)
     node_regex = "topology/pod-[0-9]+/node-(?P<node>[0-9]+)/"
     for obj in fnodes:
         if "attributes" in obj[obj.keys()[0]]:
@@ -214,7 +270,7 @@ def get_nodes():
                 if r not in attr:
                     logger.error("missing %s, invalid object: %s" % (
                         r, pretty_print(obj)))
-                    return None
+                    return (None,None)
             if attr["role"] != "spine" and attr["role"] != "leaf":
                 logger.debug("skipping role: %s, %s" % (
                     attr["role"], attr["dn"]))
@@ -223,12 +279,12 @@ def get_nodes():
             if r1 is None:
                 logger.error("failed to determine node-id from: %s" % (
                     attr["dn"]))
-                return None
+                return (None,None)
             addr_str = "%s" % attr["address"]
             attr["address"] = ipv4_to_int(attr["address"])
             if attr["address"] is None:
                 logger.error("failed to convert ipv4 address for %s" % obj)
-                return None
+                return (None,None)
             n = {
                 "id": r1.group("node"),
                 "address": attr["address"],
@@ -251,7 +307,7 @@ def get_nodes():
     vnodes = get_class("opflexODev")
     if vnodes is None:
         logger.error("failed to get opflexODev")
-        return None
+        return (None,None)
     for obj in vnodes:
         if "attributes" in obj[obj.keys()[0]]:
             attr = obj[obj.keys()[0]]["attributes"]
@@ -259,13 +315,13 @@ def get_nodes():
                  if r not in attr:
                     logger.error("missing %s, invalid object: %s" % (
                         r, pretty_print(obj)))
-                    return None
+                    return (None,None)
 
             addr_str = "%s" % attr["ip"]
             attr["ip"] = ipv4_to_int(attr["ip"])
             if attr["ip"] is None:
                 logger.error("failed to convert ipv4 address for %s" % obj)
-                return None
+                return (None,None)
             n = {
                 "id": attr["id"],
                 "address": attr["ip"],
@@ -303,7 +359,7 @@ def get_leases():
     gclass = get_class("dhcpLease")
     if gclass is None:
         logger.error("failed to get dhcpLease")
-        return None
+        return (None, None)
     
     leases = {}
     dups = {}
@@ -314,13 +370,13 @@ def get_leases():
                 if r not in attr:
                     logger.error("missing %s, invalid object: %s" % (
                         r, pretty_print(obj)))
-                    return None
+                    return (None,None)
 
             addr_str = "%s" % attr["ip"]
             attr["ip"] = ipv4_to_int(attr["ip"])
             if attr["ip"] is None:
                 logger.error("failed to convert ipv4 address for %s" % obj)
-                return None
+                return (None,None)
             n = {
                 "address": attr["ip"],
                 "address_str": addr_str,
@@ -418,9 +474,10 @@ def main():
     (nodes, dup_nodes) = get_nodes()
     (leases, dup_leases) = get_leases()
     pools = get_pools()
-    if nodes is None or leases is None or pools is None:
+    if nodes is None or leases is None or pools is None or dup_nodes is None \
+        or dup_leases is None:
         logger.error("failed to get nodes/leases/or pools")
-        return 
+        return False
     
     # add 'unknown' entry to pools for ip's we can't map a lease
     pools["unknown"] = {
@@ -536,6 +593,7 @@ def main():
                 n["address_str"], n["id"], n["name"], n["clientId"]))
              
     print "\n".join(rows)
+    return True
     
 
 
@@ -545,9 +603,62 @@ if __name__ == "__main__":
     desc = """
     Check fabric against CSCvb08670
     """
+
+    offlineHelp="""
+    Use this option when executing the script on offline data. 
+    If not set, this script assumes it is executing on a live 
+    system and will query objects directly.
+    """
+
     parser = argparse.ArgumentParser(description=desc)
     parser.add_argument("--debug", action="store", help="debug level",
         dest="debug", default="warn", choices=["debug","info","warn","error"])
+    parser.add_argument("--offline", action="store", dest="offline",
+        help=offlineHelp, default=None)
+    parser.add_argument("--offlineHelp", action="store_true", dest="ohelp",
+        help="print further offline help instructions")
     args = parser.parse_args()
     setup_logger(logging_level=args.debug)
+
+
+
+    #offline-help
+    if args.ohelp:
+        cmds = []
+        for o in OFFLINE_OBJECTS:
+            c = "icurl http://127.0.0.1:7777/api/class/%s.json " % o
+            c+= " > /tmp/off_%s.json" % o
+            cmds.append(c)
+
+        offlineOptionDesc="""
+  Offline mode expects a .tgz file.  For example:
+  %s --offline ./offline_data.tgz
+
+  When executing in offline mode, ensure that all required data is present in
+  input tar file. For best results, collect information for all tables using
+  the filenames used below. Once all commands have completed, the final tar 
+  file can be found at:
+    /tmp/offline_data.tgz
+
+  bash -c '
+   %s
+  rm /tmp/offline_data.tgz
+  tar -zcvf /tmp/offline_data.tgz /tmp/off_*
+  rm /tmp/off_*
+  '""" % (__file__, "\n   ".join(cmds))
+        print offlineOptionDesc
+        sys.exit()
+
+    else:
+        if args.offline: 
+            OFFLINE_MODE = True
+            OFFLINE_FILES = offline_extract(args.offline, 
+                offline_keys=OFFLINE_OBJECTS)
+        elif get_dn("/uni") is None:
+                msg = "\nError: Trying to execute on an unsupported device. "
+                msg = "This script is intended to run on the apic or offline"
+                msg+= " offline data.  Use -h for help.\n"
+                sys.exit(msg)
+       
+    # execute main function
     main()
