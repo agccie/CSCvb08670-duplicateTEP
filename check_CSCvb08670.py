@@ -608,7 +608,7 @@ def main(args):
     print "\n".join(rows)
 
     msg_0 = """
-    There are NO abandonded/freed leases found in any non-recovery pool.
+    There are NO abandoned/freed leases found in any non-recovery pool.
     There ARE duplicate leases and or duplicate IPs currently present in the 
     fabric that should be addressed as soon as possible.  See CSCvb08670 for
     more details.
@@ -621,7 +621,7 @@ def main(args):
     action required.
     """
     msg_1a = """
-    There are %s abandonded/freed leases in recovery pools. This is
+    There are %s abandoned/freed leases in recovery pools. This is
     expected after applying the workaround to CSCvb08670.  'Bad' leases in 
     these pools will NOT trigger a duplicate IP for new nodes added to the 
     fabric and can therefore be ignored.
