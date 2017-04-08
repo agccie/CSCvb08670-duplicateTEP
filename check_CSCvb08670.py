@@ -462,7 +462,7 @@ def get_pools():
     return pools
                 
 
-def main():
+def main(args):
     """ cross reference active nodes vs. leases to determine if:
         1) any dhcpLeases are in abandoned state
         2) any dhcpLeases MOs missing for corresponding node/vnode
@@ -493,7 +493,9 @@ def main():
     node_count = 0
     vleaf_count = 0
     bad_lease_count = 0
+    bad_lease_count_recovery = 0
     freed_lease_count = 0
+    freed_lease_count_recovery = 0
     pools_with_bad_lease = {}   # index by pool_ip
     
     for ip in nodes:
@@ -514,7 +516,10 @@ def main():
         if ip not in leases:
             logger.info("no lease for node:%s, ip:%s" % (n["name"], 
                 ipv4_to_str(ip)))
-            freed_lease_count+=1
+            if current_pool["state"] == "recovery":
+                freed_lease_count_recovery+= 1
+            else:
+                freed_lease_count+=1
             current_pool["bad_lease"].append(n)
             if current_pool["address"] not in pools_with_bad_lease:
                 pools_with_bad_lease[current_pool["address"]] = 1
@@ -523,7 +528,10 @@ def main():
             if leases[ip]["state"]!="active": 
                 logger.info("invalid lease(%s) for node:%s, ip:%s" % (
                     leases[ip]["state"], n["name"], ipv4_to_str(ip)))
-                bad_lease_count+=1
+                if current_pool["state"] == "recovery":
+                    bad_lease_count_recovery+=1
+                else:
+                    bad_lease_count+=1
                 current_pool["bad_lease"].append(n)
                 if current_pool["address"] not in pools_with_bad_lease:
                     pools_with_bad_lease[current_pool["address"]] = 1
@@ -533,7 +541,7 @@ def main():
                 current_pool["good_lease"].append(n)
 
     # print results
-    col_len = 25
+    col_len = 35
     rows = []
     rows.append('{0:<{n}}: {1}'.format("fabric nodes", node_count, n=col_len))
     rows.append('{0:<{n}}: {1}'.format("vleafs", vleaf_count, n=col_len))
@@ -563,10 +571,13 @@ def main():
                 n["id"], n["name"], l["clientId"]))
 
     # handle formatting for pools with bad leases
+    rows.append('{0:<{n}}: {1}'.format("Recovery Abandoned/Freed Leases ", 
+        (bad_lease_count_recovery + freed_lease_count_recovery), n=col_len))
     rows.append('{0:<{n}}: {1}'.format("Abandoned/Freed Leases", 
         (bad_lease_count + freed_lease_count), n=col_len))
+   
+    if len(pools_with_bad_lease)>0: rows.append("") 
     for pool_ip in pools_with_bad_lease:
-
         # should never happen
         if pool_ip not in pools:
             logger.error("abort -> pool ip %s not found in any pools"%pool_ip)
@@ -574,6 +585,8 @@ def main():
             sys.exit()
     
         p = pools[pool_ip]
+        # don't print recovery pools by default
+        if p["state"] == "recovery" and not args.recovery: continue
         pool_ip_str = pool_ip
         free_count = "?"
         good_lease_count = "?"
@@ -593,6 +606,49 @@ def main():
                 n["address_str"], n["id"], n["name"], n["clientId"]))
              
     print "\n".join(rows)
+
+    msg_0 = """
+    There are NO abandonded/freed leases found in any non-recovery pool.
+    There ARE duplicate leases and or duplicate IPs currently present in the 
+    fabric that should be addressed as soon as possible.  See CSCvb08670 for
+    more details.
+    To recover a duplicate IP or lease, decommission (with remove from apic
+    option) and recommission each node with the affected IP.
+    """
+    msg_1 = """
+    There are NO abandoned/freed leases found in any non-recovery pool.
+    All DHCP pools and leases are in a healthy state.  There is no further
+    action required.
+    """
+    msg_1a = """
+    There are %s abandonded/freed leases in recovery pools. This is
+    expected after applying the workaround to CSCvb08670.  'Bad' leases in 
+    these pools will NOT trigger a duplicate IP for new nodes added to the 
+    fabric and can therefore be ignored.
+
+    BONUS if you would like to clean abandoned/freed leases in recovery pools,
+    you can decommission (with remove from apic option) and recommission each 
+    affected node.  This step is OPTIONAL as 'bad' leases in recovery 
+    pools will not trigger duplicate IPs. 
+    Re-run this script with --recovery action to get details of each 'bad' 
+    lease in a recovery pool.
+    """ % (bad_lease_count_recovery + freed_lease_count_recovery)
+
+    msg_2 = """
+    There are %s abandoned/freed leases found that could create a duplicate IP
+    address. Apply the workaround as described in CSCvb08670 to mark the 
+    pool corresponding to the bad lease as 'recovery'.  
+    """ % (bad_lease_count + freed_lease_count)
+
+    # print useful information to help customer understand output
+    print "\n%s Summary %s" % ("*"*35, "*"*35)
+    if bad_lease_count + freed_lease_count > 0: print msg_2        
+    else:
+        if (len(dup_nodes) + len(dup_leases))>0: print msg_0
+        elif (bad_lease_count_recovery + freed_lease_count_recovery)>0:
+            print msg_1a
+        else: print msg_1
+
     return True
     
 
@@ -609,18 +665,24 @@ if __name__ == "__main__":
     If not set, this script assumes it is executing on a live 
     system and will query objects directly.
     """
+    recoveryHelp="""
+    Abandoned/Freed leases in 'recovery' pools are not at risk of creating a
+    duplicate IP.  Therefore, only abandoned/freed leases in 'normal' pools
+    are disabled by default. To show all abandoned/freed leases, use the 
+    --recovery flag.
+    """
 
     parser = argparse.ArgumentParser(description=desc)
     parser.add_argument("--debug", action="store", help="debug level",
         dest="debug", default="warn", choices=["debug","info","warn","error"])
+    parser.add_argument("--recovery", action="store_true", help=recoveryHelp,
+        dest="recovery")
     parser.add_argument("--offline", action="store", dest="offline",
         help=offlineHelp, default=None)
     parser.add_argument("--offlineHelp", action="store_true", dest="ohelp",
         help="print further offline help instructions")
     args = parser.parse_args()
     setup_logger(logging_level=args.debug)
-
-
 
     #offline-help
     if args.ohelp:
@@ -656,9 +718,9 @@ if __name__ == "__main__":
                 offline_keys=OFFLINE_OBJECTS)
         elif get_dn("/uni") is None:
                 msg = "\nError: Trying to execute on an unsupported device. "
-                msg = "This script is intended to run on the apic or offline"
+                msg+= "This script is intended to run on the apic or offline"
                 msg+= " offline data.  Use -h for help.\n"
                 sys.exit(msg)
        
     # execute main function
-    main()
+    main(args)
