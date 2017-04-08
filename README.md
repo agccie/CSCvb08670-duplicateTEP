@@ -4,27 +4,36 @@ https://bst.cloudapps.cisco.com/bugsearch/bug/CSCvb08670
 
 This script will detect duplicate leases and pools along with highlighting leases that have incorrectly been freed or abandoned.  If a pool is in the affected state (i.e., it has 1 or more leases that are freed or abandoned), then the free ip count will provide the number of new nodes that can be added without encountering a duplicate TEP address.  
 
-The script should be run directly on the APIC.  Copy the file via scp/sftp and execute it directly on the command line: 
+The script should be run directly on the APIC.  Copy the file via scp/sftp and execute it directly on the command line.  Detailed information is added to summarize the output.  In a broken condition, user will see the following output
 
 ```
 
-fab3-apic1# ./check_CSCvb08670.py
-fabric nodes             : 6
-vleafs                   : 1
-dhcp pools               : 8
-dhcp leases              : 5
-duplicate IPs            : 0
-duplicate leases         : 0
-Abandoned/Freed Leases   : 2
-    pool: 10.0.88.64         <----- pool with 1 or more abandoned/freed leases
+fab2-apic1# ./check_CSCvb08670.py
+fabric nodes                       : 4
+vleafs                             : 0
+dhcp pools                         : 3
+dhcp leases                        : 1
+duplicate IPs                      : 0
+duplicate leases                   : 0
+Recovery Abandoned/Freed Leases    : 0
+Abandoned/Freed Leases             : 3
+
+    pool: 10.0.136.64
         type       : pod
-        state      : normal  <----- this is pool is type ‘normal’.  If it is ‘recovery’, then it is unused anyways
+        state      : normal
         pool size  : 32
-        free count : 26      <----- number of new nodes that can be added before duplicate TEP will be assigned
-        good leases: 4
-        bad leases : 2
-           10.0.88.93, node-202, fab3-spine202, FOX2020GE4H   <----- lease/node that has abandoned/freed lease
-           10.0.88.95, node-101, fab3-leaf101, FDO202711U6
+        free count : 28
+        good leases: 1
+        bad leases : 3
+           10.0.136.64, node-103, fab2-leaf103, SAL1821SWJX
+           10.0.136.93, node-101, fab2-leaf101, SAL1919ERF0
+           10.0.136.94, node-201, fab2-spine201, FOX1919G3BC
+
+*********************************** Summary ***********************************
+
+    There are 3 abandoned/freed leases found that could create a duplicate IP
+    address. Apply the workaround as described in CSCvb08670 to mark the
+    pool corresponding to the bad lease as 'recovery'.
 
 ```
 
