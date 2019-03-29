@@ -348,11 +348,11 @@ def get_nodes():
 def get_leases():
     """ get all dhcp leases in mo and return dict indexed by address
         return (leases, dups)
-            where each n has following attributes: {
+            where each has following attributes: {
                 "address":
                 "address_str":
                 "clientId":
-                "state":  (should be active)
+                "state":  (should be active - recovered is also ok starting in 2.3)
             }
         return None on error
     """
@@ -514,8 +514,7 @@ def main(args):
             current_pool = pools[pool_ip]
 
         if ip not in leases:
-            logger.info("no lease for node:%s, ip:%s" % (n["name"], 
-                ipv4_to_str(ip)))
+            logger.info("no lease for node:%s, ip:%s" % (n["name"], ipv4_to_str(ip)))
             if current_pool["state"] == "recovery":
                 freed_lease_count_recovery+= 1
             else:
@@ -525,7 +524,7 @@ def main(args):
                 pools_with_bad_lease[current_pool["address"]] = 1
         else:
             # ensure lease is valid/not abandoned
-            if leases[ip]["state"]!="active": 
+            if leases[ip]["state"] != "active" and leases[ip]["state"] != "recovered":
                 logger.info("invalid lease(%s) for node:%s, ip:%s" % (
                     leases[ip]["state"], n["name"], ipv4_to_str(ip)))
                 if current_pool["state"] == "recovery":
@@ -536,8 +535,7 @@ def main(args):
                 if current_pool["address"] not in pools_with_bad_lease:
                     pools_with_bad_lease[current_pool["address"]] = 1
             else:
-                logger.debug("valid lease found for node:%s, ip:%s" % (
-                    n["name"], ipv4_to_str(ip)))
+                logger.debug("valid lease found for node:%s, ip:%s" % (n["name"], ipv4_to_str(ip)))
                 current_pool["good_lease"].append(n)
 
     # print results
